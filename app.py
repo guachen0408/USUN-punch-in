@@ -1,93 +1,94 @@
 import streamlit as st
-import folium
-from streamlit_folium import st_folium
+import requests
+from bs4 import BeautifulSoup
 import re
 
-st.set_page_config(page_title="陽程科技簽到系統", page_icon="📍", layout="wide")
+st.set_page_config(page_title="USUN 快速簽到系統", page_icon="📝")
 
-# 陽程科技精確座標
-SUNNY_TEC_COORDS = [25.0478546, 121.1903687]
-
-# --- 1. 初始化所有狀態 (保險機制) ---
-if 'lat' not in st.session_state:
-    st.session_state.lat = SUNNY_TEC_COORDS[0]
-if 'lon' not in st.session_state:
-    st.session_state.lon = SUNNY_TEC_COORDS[1]
-# 確保帳密欄位存在 state 中
-if 'u_id_val' not in st.session_state:
-    st.session_state.u_id_val = ""
-if 'u_pw_val' not in st.session_state:
-    st.session_state.u_pw_val = ""
-
-# --- 2. 側邊欄：登入資訊 (加入固定 Key) ---
+# --- 初始化與自動填入 (觸發瀏覽器記憶) ---
 with st.sidebar:
     st.header("🔐 員工登入")
-    # 使用 key 讓 Streamlit 強制記住這兩個欄位的值
-    u_id = st.text_input("工號", key="u_id_val")
-    u_pw = st.text_input("密碼", type="password", key="u_pw_val")
-    st.info("💡 座標變動時，此處資料會被妥善保存。")
+    with st.form("login_form"):
+        u_id = st.text_input("工號", key="user_id")
+        u_pw = st.text_input("密碼", type="password", key="user_pw")
+        st.caption("💡 瀏覽器將在點擊後詢問是否儲存資訊。")
+        submit_btn = st.form_submit_button("🚀 執行簽到", use_container_width=True)
 
-st.title("📍 陽程科技定向簽到")
+st.title("📝 USUN 線上簽到系統")
+st.info("模式：已移除座標傳輸。系統將以伺服器端接收時間與您的連線 IP 為準。")
 
-# --- 3. 上方數據顯示列 ---
-inf1, inf2, btn_punch = st.columns([3, 3, 2])
-
-# 即時更新顯示 (與地圖同步)
-inf1.metric("緯度 Latitude", f"{st.session_state.lat:.7f}")
-inf2.metric("經度 Longitude", f"{st.session_state.lon:.7f}")
-
-with btn_punch:
-    st.write("")
-    # 這裡直接從 session_state 抓帳密
-    punch_btn = st.button("🚀 執行簽到", use_container_width=True, type="primary")
-
-# --- 4. 地圖區塊 (局部刷新，不影響側邊欄) ---
-@st.fragment
-def map_section():
-    # 建立地圖
-    m = folium.Map(location=[st.session_state.lat, st.session_state.lon], zoom_start=18)
+# --- 核心簽到邏輯 (不帶座標版) ---
+def run_punch_no_geo(u, p):
+    BASE_URL = "https://usun-hrm.usuntek.com"
+    LOGIN_URL = f"{BASE_URL}/Ez-Portal/Login.aspx"
+    PUNCH_URL = f"{BASE_URL}/Ez-Portal/Employee/PunchOutBaiDu.aspx"
     
-    # 增加定位控制 (JS 前端行為)
-    from folium.plugins import LocateControl
-    LocateControl(auto_start=False, flyTo=True, keepCurrentZoomLevel=True).add_to(m)
-    
-    # 紅點標記：這就是核心，我們監聽它的位置
-    folium.Marker(
-        [st.session_state.lat, st.session_state.lon],
-        icon=folium.Icon(color="red", icon="crosshairs", prefix='fa')
-    ).add_to(m)
-    
-    # 渲染地圖，監聽「最後點擊位置」
-    map_data = st_folium(
-        m, 
-        height=500, 
-        use_container_width=True,
-        key="punch_map_final_safe", # 固定 Key 避免地圖重置
-        returned_objects=["last_clicked"]
-    )
+    session = requests.Session()
+    # 模擬標準瀏覽器，這是穩定簽到的關鍵
+    session.headers.update({"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"})
 
-    # 點擊地圖時同步更新座標
-    if map_data and map_data.get("last_clicked"):
-        new_lat = map_data["last_clicked"]["lat"]
-        new_lon = map_data["last_clicked"]["lng"]
+    try:
+        # 1. 登入階段
+        res_l = session.get(LOGIN_URL)
+        soup_l = BeautifulSoup(res_l.text, 'html.parser')
+        payload_l = {tag.get('name'): tag.get('value', '') for tag in soup_l.find_all('input') if tag.get('name')}
+        payload_l.update({
+            "ctl00$ContentPlaceHolder1$txtLogin": u, 
+            "ctl00$ContentPlaceHolder1$txtPass": p, 
+            "ctl00$ContentPlaceHolder1$btn_login": "登入"
+        })
+        login_res = session.post(LOGIN_URL, data=payload_l)
         
-        if new_lat != st.session_state.lat or new_lon != st.session_state.lon:
-            st.session_state.lat = new_lat
-            st.session_state.lon = new_lon
-            # 只重刷地圖區塊，不影響側邊欄 input
-            st.rerun(scope="fragment")
+        # 判斷是否登入成功 (未被彈回 Login 頁)
+        if "Login.aspx" in login_res.url and "ReturnUrl" not in login_res.url:
+            return False, "❌ 登入失敗：請確認帳號密碼。"
 
-map_section()
+        # 2. 準備簽到封包 (獲取 ViewState)
+        res_p = session.get(PUNCH_URL)
+        soup_p = BeautifulSoup(res_p.text, 'html.parser')
+        payload_p = {tag.get('name'): tag.get('value', '') for tag in soup_p.find_all('input') if tag.get('name')}
+        
+        # 3. 發送簽到指令 (拿掉 longitude 與 latitude)
+        payload_p.update({
+            "ctl00$RadScriptManager1": "ctl00$ContentPlaceHolder1$ctl00$ContentPlaceHolder1$RadAjaxPanel1Panel|ctl00$ContentPlaceHolder1$btnSubmit_input",
+            "__ASYNCPOST": "true",
+            # 注意：此處已移除經緯度欄位
+            "ctl00$ContentPlaceHolder1$btnSubmit_input": "確認送出"
+        })
 
-# --- 5. 執行打卡動作 ---
-if punch_btn:
-    # 從 session_state 讀取最新輸入的值
-    user = st.session_state.u_id_val
-    pw = st.session_state.u_pw_val
-    
-    if not user or not pw:
-        st.error("❌ 請先輸入工號與密碼！")
+        ajax_headers = {
+            "X-MicrosoftAjax": "Delta=true", 
+            "X-Requested-With": "XMLHttpRequest", 
+            "Referer": PUNCH_URL
+        }
+        
+        # 發送最終 Ajax 請求
+        response = session.post(PUNCH_URL, data=payload_p, headers=ajax_headers)
+        
+        # 4. 解析回傳訊息 (針對你提供的 3591 字元封包結構)
+        if "簽到完成" in response.text:
+            time_m = re.search(r'lb_time".*?>(.*?)</span>', response.text)
+            name_m = re.search(r'lbName".*?>(.*?)</span>', response.text)
+            u_name = name_m.group(1) if name_m else "員工"
+            p_time = time_m.group(1) if time_m else "伺服器已記錄"
+            return True, f"🎉 {u_name}，簽到成功！\n\n系統紀錄時間：{p_time}"
+        else:
+            # 提取錯誤文字 (例如: 已簽到過、連線逾時)
+            clean_msg = "".join(re.findall(r'[\u4e00-\u9fa5]+', response.text))
+            return False, f"⚠️ 簽到未成功。系統回應：{clean_msg}"
+
+    except Exception as e:
+        return False, f"💥 通訊異常: {str(e)}"
+
+# --- 點擊動作 ---
+if submit_btn:
+    if not u_id or not u_pw:
+        st.warning("請在側邊欄輸入帳號密碼。")
     else:
-        # 執行原本的 run_punch 函數
-        st.toast(f"正在為 {user} 發送座標...")
-        # (這裡接上你之前的 run_punch 邏輯)
+        with st.spinner("正在與 USUN 伺服器同步資訊..."):
+            success, msg = run_punch_no_geo(u_id, u_pw)
+            if success:
+                st.success(msg)
+                st.balloons()
+            else:
+                st.error(msg)
