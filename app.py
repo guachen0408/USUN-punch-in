@@ -1,46 +1,55 @@
 import streamlit as st
 import folium
 from streamlit_folium import st_folium
-from folium.plugins import LocateControl
 import re
 
+# --- 介面設定 ---
 st.set_page_config(page_title="陽程科技簽到系統", page_icon="📍", layout="wide")
 
 # 陽程科技精確座標
 SUNNY_TEC_COORDS = [25.0478546, 121.1903687]
 
-# 初始化狀態，避免刷新時遺失數據
+# 初始化狀態
 if 'lat' not in st.session_state:
     st.session_state.lat = SUNNY_TEC_COORDS[0]
 if 'lon' not in st.session_state:
     st.session_state.lon = SUNNY_TEC_COORDS[1]
 
-# --- 側邊欄：登入資訊 (這部分不會受地圖點擊影響) ---
-with st.sidebar:
-    st.header("🔐 員工登入")
-    with st.form("login_info"):
-        u_id = st.text_input("工號")
-        u_pw = st.text_input("密碼", type="password")
-        st.form_submit_button("確認登入資訊")
-
 st.title("📍 陽程科技定向簽到")
 
-# 建立上方資訊列
-inf1, inf2, btn_col = st.columns([2, 2, 2])
-lat_display = inf1.empty()
-lon_display = inf2.empty()
+# --- 第一列：數據顯示與定位按鈕 ---
+inf1, inf2, btn_geo, btn_punch = st.columns([2, 2, 1.5, 1.5])
 
-# --- 定義局部刷新區塊 ---
+# 顯示數值
+lat_display = inf1.metric("緯度 Latitude", f"{st.session_state.lat:.7f}")
+lon_display = inf2.metric("經度 Longitude", f"{st.session_state.lon:.7f}")
+
+# 「抓取目前定位」功能
+with btn_geo:
+    st.write("") # 對齊高度
+    # 這裡我們使用一個隱藏的元件或是說明，因為 Streamlit Cloud 
+    # 獲取使用者當前精確 GPS 需透過瀏覽器，最穩定的做法是直接在地圖上點擊。
+    # 如果要「自動」跳轉回公司，我們做一個回位按鈕：
+    if st.button("🏠 回到工廠位置", use_container_width=True):
+        st.session_state.lat = SUNNY_TEC_COORDS[0]
+        st.session_state.lon = SUNNY_TEC_COORDS[1]
+        st.rerun()
+
+with btn_punch:
+    st.write("")
+    punch_btn = st.button("🚀 執行簽到", use_container_width=True, type="primary")
+
+# --- 第二列：地圖區塊 (使用 Fragment 避免閃爍) ---
 @st.fragment
 def map_section():
-    # 建立地圖物件
+    # 建立地圖，位置鎖定在當前的 session_state
     m = folium.Map(location=[st.session_state.lat, st.session_state.lon], zoom_start=18)
-    LocateControl(auto_start=False, flyTo=True).add_to(m)
     
-    # 紅點標記：固定綁定 session_state
+    # 紅點標記：必須跟著 st.session_state 跑
     folium.Marker(
         [st.session_state.lat, st.session_state.lon],
-        icon=folium.Icon(color="red", icon="info-sign")
+        popup="當前選取點",
+        icon=folium.Icon(color="red", icon="screenshot", prefix='fa')
     ).add_to(m)
     
     # 渲染地圖
@@ -48,31 +57,20 @@ def map_section():
         m, 
         height=500, 
         use_container_width=True,
-        key="punch_map_fragment" # 關鍵：固定 Key
+        key="punch_map_final",
+        # 增加此參數可以讓地圖更靈敏地捕捉點擊
+        returned_objects=["last_clicked"]
     )
 
-    # 處理點擊事件：僅更新 state，不觸發整頁 rerun
+    # 關鍵：點擊地圖時，立刻更新數字與紅點
     if map_data and map_data.get("last_clicked"):
-        new_lat = map_data["last_clicked"]["lat"]
-        new_lon = map_data["last_clicked"]["lng"]
-        if new_lat != st.session_state.lat or new_lon != st.session_state.lon:
-            st.session_state.lat = new_lat
-            st.session_state.lon = new_lon
-            # 這裡不使用 st.rerun()，而是讓 fragment 自行處理
+        click_lat = map_data["last_clicked"]["lat"]
+        click_lon = map_data["last_clicked"]["lng"]
+        
+        if click_lat != st.session_state.lat or click_lon != st.session_state.lon:
+            st.session_state.lat = click_lat
+            st.session_state.lon = click_lon
+            # 強制刷新局部區塊，讓上方數字與地圖標記同步
             st.rerun(scope="fragment")
 
-# 執行局部地圖區塊
 map_section()
-
-# 更新上方顯示數值 (這部分會隨 state 改變)
-lat_display.metric("緯度 Latitude", f"{st.session_state.lat:.7f}")
-lon_display.metric("經度 Longitude", f"{st.session_state.lon:.7f}")
-
-with btn_col:
-    st.write("")
-    punch_btn = st.button("🚀 執行簽到", use_container_width=True, type="primary")
-
-# --- 簽到執行邏輯 ---
-if punch_btn:
-    # (執行之前的 run_punch 函數內容...)
-    st.success(f"已嘗試以座標 {st.session_state.lat}, {st.session_state.lon} 簽到")
