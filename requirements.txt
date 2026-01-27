@@ -1,5 +1,4 @@
 requests
 beautifulsoup4
 streamlit
-folium
-streamlit-folium
+extra-streamlit-components

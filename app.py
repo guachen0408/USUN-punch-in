@@ -2,71 +2,75 @@ import streamlit as st
 import requests
 from bs4 import BeautifulSoup
 import re
-import streamlit.components.v1 as components
+import extra_streamlit_components as stx
+from datetime import datetime, timedelta
 
-st.set_page_config(page_title="USUN 自動記憶簽到", page_icon="📝", layout="centered")
+st.set_page_config(page_title="USUN Cookie 簽到", page_icon="📝", layout="centered")
 
-# --- 1. JavaScript 橋接器 (負責自動讀取/儲存 LocalStorage) ---
-# 這段 JS 會在你的手機/電腦本地端執行
-js_code = """
-<script>
-    const KEY_ID = 'usun_id_storage';
-    const KEY_PW = 'usun_pw_storage';
+# --- 1. 初始化 Cookie 管理器 ---
+cookie_manager = stx.CookieManager()
 
-    // 1. 網頁開啟時，自動把存好的資料丟回給 Streamlit
-    window.parent.postMessage({
-        type: 'LOAD_DATA',
-        id: localStorage.getItem(KEY_ID) || "",
-        pw: localStorage.getItem(KEY_PW) || ""
-    }, "*");
-
-    // 2. 監聽儲存請求
-    window.parent.addEventListener('message', (event) => {
-        if (event.data.type === 'SAVE_DATA') {
-            localStorage.setItem(KEY_ID, event.data.id);
-            localStorage.setItem(KEY_PW, event.data.pw);
-        }
-    });
-</script>
-"""
-components.html(js_code, height=0)
-
-# --- 2. 接收並同步資料 ---
-if 'u_id' not in st.session_state: st.session_state.u_id = ""
-if 'u_pw' not in st.session_state: st.session_state.u_pw = ""
-
-# 這裡是一個「看不見」的小技巧，用來接收 JS 傳回來的數值
-# (實務上 Streamlit 對 JS 雙向溝通有延遲，所以我們加上一個邏輯判斷)
+# --- 2. 讀取 Cookie (一開網頁就抓取) ---
+# 這裡嘗試從瀏覽器抓取之前的紀錄
+saved_id = cookie_manager.get(cookie="u_id")
+saved_pw = cookie_manager.get(cookie="u_pw")
 
 st.title("📝 USUN 個人簽到系統")
 st.markdown("---")
 
 st.subheader("🔐 員工登入")
 
-# 這裡直接連動 Session State，達成「一開就顯示」
-u_id = st.text_input("工號", value=st.session_state.u_id, placeholder="請輸入工號")
-u_pw = st.text_input("密碼", type="password", value=st.session_state.u_pw, placeholder="請輸入密碼")
+# 將抓到的 Cookie 填入 value，達成「一開頁面就顯示」
+u_id = st.text_input("工號", value=saved_id if saved_id else "", placeholder="請輸入工號")
+u_pw = st.text_input("密碼", type="password", value=saved_pw if saved_pw else "", placeholder="請輸入密碼")
 
-submit_btn = st.button("🚀 執行簽到並儲存至此裝置", use_container_width=True, type="primary")
+submit_btn = st.button("🚀 執行簽到並記住在此裝置", use_container_width=True, type="primary")
 
-# --- 3. 點擊後同步儲存至 LocalStorage ---
+# --- 3. 核心簽到邏輯 ---
+def run_punch(u, p):
+    BASE_URL = "https://usun-hrm.usuntek.com"
+    LOGIN_URL = f"{BASE_URL}/Ez-Portal/Login.aspx"
+    PUNCH_URL = f"{BASE_URL}/Ez-Portal/Employee/PunchOutBaiDu.aspx"
+    session = requests.Session()
+    session.headers.update({"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"})
+    try:
+        res_l = session.get(LOGIN_URL)
+        soup_l = BeautifulSoup(res_l.text, 'html.parser')
+        payload_l = {tag.get('name'): tag.get('value', '') for tag in soup_l.find_all('input') if tag.get('name')}
+        payload_l.update({"ctl00$ContentPlaceHolder1$txtLogin": u, "ctl00$ContentPlaceHolder1$txtPass": p, "ctl00$ContentPlaceHolder1$btn_login": "登入"})
+        login_res = session.post(LOGIN_URL, data=payload_l)
+        if "Login.aspx" in login_res.url and "ReturnUrl" not in login_res.url:
+            return False, "❌ 登入失敗"
+        
+        res_p = session.get(PUNCH_URL)
+        soup_p = BeautifulSoup(res_p.text, 'html.parser')
+        payload_p = {tag.get('name'): tag.get('value', '') for tag in soup_p.find_all('input') if tag.get('name')}
+        payload_p.update({
+            "ctl00$RadScriptManager1": "ctl00$ContentPlaceHolder1$ctl00$ContentPlaceHolder1$RadAjaxPanel1Panel|ctl00$ContentPlaceHolder1$btnSubmit_input",
+            "__ASYNCPOST": "true",
+            "ctl00$ContentPlaceHolder1$btnSubmit_input": "確認送出"
+        })
+        ajax_headers = {"X-MicrosoftAjax": "Delta=true", "X-Requested-With": "XMLHttpRequest", "Referer": PUNCH_URL}
+        response = session.post(PUNCH_URL, data=payload_p, headers=ajax_headers)
+        if "簽到完成" in response.text:
+            return True, "🎉 簽到成功！"
+        return False, "⚠️ 簽到未成功"
+    except Exception as e:
+        return False, f"💥 錯誤: {str(e)}"
+
+# --- 4. 點擊執行與存入 Cookie ---
 if submit_btn:
     if u_id and u_pw:
-        # 透過 JS 將資料存入這台裝置的瀏覽器
-        save_js = f"""
-        <script>
-            window.parent.postMessage({{
-                type: 'SAVE_DATA',
-                id: '{u_id}',
-                pw: '{p_pw}'
-            }}, "*");
-        </script>
-        """
-        # 注意：實際部署時，為了安全，建議只儲存工號，密碼交給瀏覽器管理
-        st.session_state.u_id = u_id
-        st.session_state.u_pw = u_pw
+        # 存入 Cookie，設定過期時間為 30 天後
+        cookie_manager.set("u_id", u_id, expires_at=datetime.now() + timedelta(days=30))
+        cookie_manager.set("u_pw", u_pw, expires_at=datetime.now() + timedelta(days=30))
         
-        # 執行簽到 (run_punch 函數省略，同前幾版本)
-        st.success("簽到指令已發送，資訊已儲存於此裝置。")
+        with st.spinner("連線中..."):
+            success, msg = run_punch(u_id, u_pw)
+            if success:
+                st.success(msg)
+                st.balloons()
+            else:
+                st.error(msg)
     else:
-        st.warning("請輸入完整資訊。")
+        st.warning("請完整輸入資訊。")
