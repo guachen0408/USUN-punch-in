@@ -52,4 +52,65 @@ with col2:
 # --- 核心簽到邏輯 ---
 def run_punch(u, p, la, lo):
     BASE_URL = "https://usun-hrm.usuntek.com"
-    LOGIN_URL = f"{BASE_URL}/Ez-Portal
+    LOGIN_URL = f"{BASE_URL}/Ez-Portal/Login.aspx"
+    PUNCH_URL = f"{BASE_URL}/Ez-Portal/Employee/PunchOutBaiDu.aspx"
+    
+    session = requests.Session()
+    session.headers.update({"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"})
+
+    try:
+        # 1. 登入
+        res_l = session.get(LOGIN_URL)
+        soup_l = BeautifulSoup(res_l.text, 'html.parser')
+        payload_l = {tag.get('name'): tag.get('value', '') for tag in soup_l.find_all('input') if tag.get('name')}
+        # 對接正確的欄位名稱
+        payload_l.update({
+            "ctl00$ContentPlaceHolder1$txtLogin": u, 
+            "ctl00$ContentPlaceHolder1$txtPass": p, 
+            "ctl00$ContentPlaceHolder1$btn_login": "登入"
+        })
+        login_res = session.post(LOGIN_URL, data=payload_l)
+        
+        if "Login.aspx" in login_res.url and "ReturnUrl" not in login_res.url:
+            return False, "登入失敗：請檢查帳號密碼是否正確。"
+
+        # 2. 打卡
+        res_p = session.get(PUNCH_URL)
+        soup_p = BeautifulSoup(res_p.text, 'html.parser')
+        payload_p = {tag.get('name'): tag.get('value', '') for tag in soup_p.find_all('input') if tag.get('name')}
+        
+        payload_p.update({
+            "ctl00$RadScriptManager1": "ctl00$ContentPlaceHolder1$ctl00$ContentPlaceHolder1$RadAjaxPanel1Panel|ctl00$ContentPlaceHolder1$btnSubmit_input",
+            "__ASYNCPOST": "true",
+            "ctl00$ContentPlaceHolder1$longitude": lo,
+            "ctl00$ContentPlaceHolder1$latitude": la,
+            "ctl00$ContentPlaceHolder1$btnSubmit_input": "確認送出"
+        })
+
+        ajax_headers = {"X-MicrosoftAjax": "Delta=true", "X-Requested-With": "XMLHttpRequest", "Referer": PUNCH_URL}
+        response = session.post(PUNCH_URL, data=payload_p, headers=ajax_headers)
+        
+        # 3. 解析 3591 字元封包
+        if "簽到完成" in response.text:
+            time_m = re.search(r'lb_time".*?>(.*?)</span>', response.text)
+            punch_time = time_m.group(1) if time_m else "伺服器已記錄"
+            return True, f"簽到成功！\n\n系統紀錄時間：{punch_time}"
+        else:
+            clean_msg = "".join(re.findall(r'[\u4e00-\u9fa5]+', response.text))
+            return False, f"簽到未完成：{clean_msg if clean_msg else '座標或權限異常'}"
+
+    except Exception as e:
+        return False, f"連線錯誤: {str(e)}"
+
+# --- 點擊執行 ---
+if punch_btn:
+    if not u_id or not u_pw:
+        st.warning("👈 請先在左側輸入帳號密碼並點擊確認。")
+    else:
+        with st.spinner("傳送座標中..."):
+            success, msg = run_punch(u_id, u_pw, selected_lat, selected_lon)
+            if success:
+                st.success(msg)
+                st.balloons()
+            else:
+                st.error(msg)
