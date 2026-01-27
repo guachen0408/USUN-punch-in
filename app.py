@@ -81,4 +81,24 @@ def run_punch(u, p, la, lo):
             return True, f"🎉 簽到成功！\n\n**姓名**：{user_name}\n\n**系統紀錄時間**：{punch_time}"
         
         elif "pageRedirect" in raw_res:
-            return False, "⚠️ 失敗：Session 過期或被強制跳轉
+            return False, "⚠️ 失敗：Session 過期或被強制跳轉。"
+        else:
+            # 抓取回傳的中文字做錯誤提示
+            clean_msg = "".join(re.findall(r'[\u4e00-\u9fa5]+', raw_res))
+            return False, f"⚠️ 系統提示：{clean_msg if clean_msg else '未知的狀態'}"
+
+    except Exception as e:
+        return False, f"💥 崩潰錯誤: {str(e)}"
+
+# --- UI 介面 ---
+if st.button("🚀 執行簽到", use_container_width=True):
+    if not u_id or not u_pw:
+        st.error("請輸入帳號密碼。")
+    else:
+        with st.spinner('正在與公司伺服器通訊...'):
+            success, message = run_punch(u_id, u_pw, lat, lon)
+            if success:
+                st.success(message)
+                st.balloons()
+            else:
+                st.error(message)
