@@ -1,5 +1,5 @@
 import streamlit as st
-st.set_page_config(page_title="USUN 智慧打卡助", page_icon="📝", layout="centered")
+st.set_page_config(page_title="USUN 智慧打卡助手", page_icon="📝", layout="centered")
 
 import requests
 from bs4 import BeautifulSoup
@@ -8,9 +8,9 @@ import extra_streamlit_components as stx
 import time
 import json
 from datetime import datetime, timedelta
-from typing import Tuple, Dict, Any, Optional
+from typing import Tuple, Dict
 
-# --- 常箱與設定 ---
+# --- 常數與設定 ---
 BASE_URL = "https://usun-hrm.usuntek.com"
 LOGIN_URL = f"{BASE_URL}/Ez-Portal/Login.aspx"
 PUNCH_URL = f"{BASE_URL}/Ez-Portal/Employee/PunchOutBaiDu.aspx"
@@ -75,7 +75,7 @@ def run_punch(u: str, p: str, debug: bool = False) -> Tuple[bool, str]:
             "ctl00$ContentPlaceHolder1$btn_login": "登入"
         })
 
-        # ===== 步驟 2：提交提交認證 =====
+        # ===== 步驟 2：提交認證 =====
         with st.spinner("📡 步驟 2/3 - 正在提交身份驗證..."):
             login_res = session.post(LOGIN_URL, data=payload_l, timeout=DEFAULT_TIMEOUT)
             if debug:
@@ -129,25 +129,31 @@ def run_punch(u: str, p: str, debug: bool = False) -> Tuple[bool, str]:
         return False, f"💥 未知異常：{str(e)}"
 
 
-# --- UI 修改與頁面佈局 ---
-
-# --- 頁面佈局 ---
+# --- 頁面樣式 ---
 
 st.title("📝 USUN 智慧簽到助手")
 st.markdown("""
 <style>
+    /* 主體背景 */
     .main {
         background-color: #f8f9fa;
     }
+    /* 按鈕樣式 */
     .stButton>button {
         width: 100%;
-        border-radius: 5px;
+        border-radius: 8px;
         height: 3em;
-        background-color: #007bff;
-        color: white;
+        font-weight: 600;
     }
+    /* 輸入框樣式 */
     .stTextInput>div>div>input {
-        border-radius: 5px;
+        border-radius: 8px;
+    }
+    /* 深色模式支援 */
+    @media (prefers-color-scheme: dark) {
+        .main {
+            background-color: #0e1117;
+        }
     }
 </style>
 """, unsafe_allow_html=True)
@@ -171,7 +177,7 @@ with col_b:
 
     # 進階選項
     with st.expander("🛠️ 進階設定"):
-        debug_mode = st.checkbox("🔍 啟用連線連線調試模式", value=False, help="若簽到異常，開啟此模式可查看詳細錯誤資訊。")
+        debug_mode = st.checkbox("🔍 啟用連線調試模式", value=False, help="若簽到異常，開啟此模式可查看詳細錯誤資訊。")
 
     st.markdown("---")
     
@@ -232,4 +238,4 @@ if st.session_state.submit_pending:
 
 # 頁尾
 st.markdown("---")
-st.caption("© 2024 USUN Technology | 自動化流程優化版本")
+st.caption("© 2026 USUN Technology | 智慧打卡助手 v2.0")
