@@ -1,4 +1,6 @@
 import streamlit as st
+st.set_page_config(page_title="USUN 智慧打卡助", page_icon="📝", layout="centered")
+
 import requests
 from bs4 import BeautifulSoup
 import re
@@ -129,6 +131,8 @@ def run_punch(u: str, p: str, debug: bool = False) -> Tuple[bool, str]:
 
 # --- UI 修改與頁面佈局 ---
 
+# --- 頁面佈局 ---
+
 st.title("📝 USUN 智慧簽到助手")
 st.markdown("""
 <style>
@@ -154,7 +158,6 @@ all_cookies = cookie_manager.get_all()
 saved_id = all_cookies.get("u_id", "")
 saved_pw = all_cookies.get("u_pw", "")
 
-st.set_page_config(page_title="USUN 智慧打卡", page_icon="📝", layout="centered")
 
 st.info("💡 **提示：** 系統會自動記住您的登入資訊 30 天，讓您下次簽到更迅速。")
 
@@ -189,31 +192,43 @@ if help_btn:
     )
 
 # --- 打卡邏輯處理 ---
+if "submit_pending" not in st.session_state:
+    st.session_state.submit_pending = False
+
 if submit_btn:
+    st.session_state.submit_pending = True
+
+if st.session_state.submit_pending:
     if not u_id or not u_pw:
         st.warning("⚠️ 請完整填寫工號與密碼。")
+        st.session_state.submit_pending = False
     else:
         # 儲存 Cookie
         expiry = datetime.now() + timedelta(days=30)
         cookie_manager.set("u_id", u_id, expires_at=expiry, key="set_uid")
         cookie_manager.set("u_pw", u_pw, expires_at=expiry, key="set_upw")
         
-        # 執行主流程
-        success, msg = run_punch(u_id, u_pw, debug=debug_mode)
+        # 執行主流程 (使用 st.status 包裝以提供更好回饋)
+        with st.status("正在執行打卡程序...", expanded=True) as status:
+            success, msg = run_punch(u_id, u_pw, debug=debug_mode)
+            if success:
+                status.update(label="✅ 簽到成功", state="complete")
+                st.success(msg)
+                st.balloons()
+                st.toast("簽到完成！", icon="🎉")
+            else:
+                status.update(label="❌ 簽到失敗", state="error")
+                st.error(msg)
+                with st.expander("💡 快速排錯建議"):
+                    st.markdown(
+                        "1. **檢查密碼**：請確認密碼是否剛更新？\n"
+                        "2. **檢查網路**：您是否已連上 VPN？\n"
+                        "3. **重複簽到**：系統可能已經有您今天的打卡記錄了。\n"
+                        "4. **手動確認**：[點此前往 HRM 官網確認](https://usun-hrm.usuntek.com)"
+                    )
         
-        if success:
-            st.success(msg)
-            st.balloons()
-            st.toast("簽到完成！祝您有個美好的一天。", icon="🎉")
-        else:
-            st.error(msg)
-            with st.expander("💡 快速排錯建議"):
-                st.markdown(
-                    "1. **檢查密碼**：請確認密碼是否剛更新？\n"
-                    "2. **檢查網路**：您是否已連上 VPN？\n"
-                    "3. **重複簽到**：系統可能已經有您今天的打卡記錄了。\n"
-                    "4. **手動確認**：[點此前往 HRM 官網確認](https://usun-hrm.usuntek.com)"
-                )
+        # 完成後重設狀態
+        st.session_state.submit_pending = False
 
 # 頁尾
 st.markdown("---")
